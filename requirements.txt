@@ -1,0 +1,7 @@
+databricks-sdk
+flask
+pandas
+requests
+mcp
+streamlit
+uvicorn

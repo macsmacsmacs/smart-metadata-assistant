@@ -1,0 +1,47 @@
+# Cloud Build config: build and push Docker image, then deploy to Cloud Run
+# Trigger: gcloud builds submit --config=cloudbuild.yaml
+# Set substitutions: _REGION, _PROJECT_ID, _SERVICE_NAME, _REPO_NAME
+# Or use default triggers in Cloud Console
+
+substitutions:
+  _REGION: us-central1
+  _PROJECT_ID: ${PROJECT_ID}
+  _SERVICE_NAME: metadata-mcp-server
+  _REPO_NAME: metadata-mcp
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/metadata-mcp:${SHORT_SHA:-latest}
+      - .
+    id: build
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/metadata-mcp:${SHORT_SHA:-latest}
+    id: push
+    waitFor:
+      - build
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image
+      - ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/metadata-mcp:${SHORT_SHA:-latest}
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
+    id: deploy
+    waitFor:
+      - push
+
+options:
+  logging: CLOUD_LOGGING_ONLY

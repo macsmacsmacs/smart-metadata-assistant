@@ -1,0 +1,21 @@
+# Secrets and env
+secrets.py
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Data and results (optional - remove if you want to track sample CSVs)
+# my_results.csv
+# kids_reality_competition_content.csv

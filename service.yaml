@@ -1,0 +1,46 @@
+# Cloud Run service for metadata MCP server
+# Deploy: gcloud run services replace service.yaml
+# Prerequisites:
+#   1. Create secrets in Secret Manager: DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET, DATABRICKS_HOST
+#   2. Grant Cloud Run service account roles/secretmanager.secretAccessor
+#   3. Build and push image: docker build -t IMAGE_URL . && docker push IMAGE_URL
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: metadata-mcp-server
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      serviceAccountName: default
+      containers:
+        - image: IMAGE_URL  # e.g. us-docker.pkg.dev/PROJECT_ID/REPO/metadata-mcp:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABRICKS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: DATABRICKS_HOST
+                  key: latest
+            - name: DATABRICKS_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: DATABRICKS_CLIENT_ID
+                  key: latest
+            - name: DATABRICKS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: DATABRICKS_CLIENT_SECRET
+                  key: latest
+            - name: DATABRICKS_WAREHOUSE_ID
+              value: ""  # Optional: set via env or leave empty to use first available
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: "1"
