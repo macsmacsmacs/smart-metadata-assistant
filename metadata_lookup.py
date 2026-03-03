@@ -231,25 +231,30 @@ def get_imdb_metadata(
 
         for genre_col, year_col, company_col in column_sets:
             company_select = f", {company_col} as company" if company_col else ""
-            query = f"""
-            SELECT
-                titleId,
-                {genre_col} as genres,
-                {year_col} as year
-                {company_select}
-            FROM {title_tbl}
-            WHERE titleId IN ({imdb_ids_str})
-            """
-            try:
-                rows = execute_sql_query(client, warehouse_id, query)
-                year_col_used = year_col
-                company_col_used = company_col
+            for title_col in ("originalTitle", "title", None):
+                title_select = f", {title_col} as title" if title_col else ""
+                query = f"""
+                SELECT
+                    titleId,
+                    {genre_col} as genres,
+                    {year_col} as year
+                    {company_select}
+                    {title_select}
+                FROM {title_tbl}
+                WHERE titleId IN ({imdb_ids_str})
+                """
+                try:
+                    rows = execute_sql_query(client, warehouse_id, query)
+                    year_col_used = year_col
+                    company_col_used = company_col
+                    break
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "column" in msg or "unresolved" in msg or "cannot be resolved" in msg:
+                        continue
+                    raise
+            if rows is not None:
                 break
-            except Exception as e:
-                msg = str(e).lower()
-                if "column" in msg or "unresolved" in msg or "cannot be resolved" in msg:
-                    continue
-                raise
 
         if not rows:
             continue
@@ -325,6 +330,7 @@ def get_imdb_metadata(
                 "genre": genre,
                 "release_year": release_year,
                 "company": company,
+                "title": row.get("title"),
             }
 
     return results
@@ -357,39 +363,49 @@ def check_content_info(
     if not valid_ids:
         return {}
 
-    results: Dict[str, Dict] = {iid: {"program_id": None, "import_id": None, "primary_genre": None} for iid in valid_ids}
+    results: Dict[str, Dict] = {
+        iid: {"program_id": None, "import_id": None, "primary_genre": None, "logline": None}
+        for iid in valid_ids
+    }
     batch_size = 200
 
     for i in range(0, len(valid_ids), batch_size):
         batch = valid_ids[i:i + batch_size]
         imdb_ids_str = ",".join([f"'{iid}'" for iid in batch])
 
-        # Try different column combinations for IMDB ID and genre
-        column_options = [
+        # Try different column combinations for IMDB ID, genre, and logline
+        base_options = [
             ("program_imdb_id", "program_id", "import_id", "primary_genre"),
             ("program_imdb_id", "program_id", "import_id", "genre"),
             ("imdb_id", "program_id", "import_id", "primary_genre"),
             ("imdb_id", "program_id", "import_id", "genre"),
         ]
+        # content_info has program_description, description, title_description; no "logline"
+        logline_cols = ("program_description", "description", "title_description", None)
 
         rows = None
-        for imdb_col, prog_col, import_col, genre_col in column_options:
-            query = f"""
-            SELECT
-                {imdb_col} as imdb_id,
-                {prog_col} as program_id,
-                {import_col} as import_id,
-                {genre_col} as primary_genre
-            FROM {content_tbl}
-            WHERE {imdb_col} IN ({imdb_ids_str})
-            """
-            try:
-                rows = execute_sql_query(client, warehouse_id, query)
+        for imdb_col, prog_col, import_col, genre_col in base_options:
+            for logline_col in logline_cols:
+                logline_select = f", {logline_col} as logline" if logline_col else ""
+                query = f"""
+                SELECT
+                    {imdb_col} as imdb_id,
+                    {prog_col} as program_id,
+                    {import_col} as import_id,
+                    {genre_col} as primary_genre
+                    {logline_select}
+                FROM {content_tbl}
+                WHERE {imdb_col} IN ({imdb_ids_str})
+                """
+                try:
+                    rows = execute_sql_query(client, warehouse_id, query)
+                    break
+                except Exception as e:
+                    if "column" in str(e).lower() or "unresolved" in str(e).lower():
+                        continue
+                    raise
+            if rows is not None:
                 break
-            except Exception as e:
-                if "column" in str(e).lower() or "unresolved" in str(e).lower():
-                    continue
-                raise
 
         if rows:
             for row in rows:
@@ -397,6 +413,7 @@ def check_content_info(
                 program_id = row.get("program_id")
                 import_id = row.get("import_id")
                 primary_genre = row.get("primary_genre")
+                logline_val = row.get("logline")
                 if imdb_id:
                     if program_id:
                         try:
@@ -407,6 +424,8 @@ def check_content_info(
                         results[imdb_id]["import_id"] = str(import_id)
                     if primary_genre:
                         results[imdb_id]["primary_genre"] = str(primary_genre)
+                    if logline_val:
+                        results[imdb_id]["logline"] = str(logline_val)
 
     return results
 
@@ -554,6 +573,25 @@ def lookup_by_program_id(
     return None
 
 
+def lookup_metadata_by_program_id(program_id: int) -> Dict:
+    """
+    Look up metadata by program_id from content_info.
+    Resolves IMDB ID first, then fetches full metadata.
+    """
+    client = get_databricks_client()
+    warehouse_id = get_sql_warehouse_id(client)
+    imdb_id = lookup_by_program_id(client, warehouse_id, program_id)
+    if not imdb_id:
+        return {
+            "program_id": program_id,
+            "imdb_id": None,
+            "error": "No IMDB ID found for this program_id",
+        }
+    result = lookup_title(imdb_id)
+    result["program_id"] = program_id
+    return result
+
+
 def lookup_title(imdb_id: str) -> Dict:
     """
     Look up metadata for a single IMDB ID.
@@ -584,6 +622,8 @@ def lookup_title(imdb_id: str) -> Dict:
 
     return {
         "imdb_id": imdb_id,
+        "title": meta.get("title"),
+        "logline": content.get("logline"),
         "primary_genre": primary_genre,  # CMS genre (main)
         "imdb_genre": imdb_genre,         # IMDB genre (fallback)
         "release_year": meta.get("release_year"),

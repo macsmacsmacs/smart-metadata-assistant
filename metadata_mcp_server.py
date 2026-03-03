@@ -11,7 +11,12 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from metadata_lookup import lookup_title, enrich_csv, enrich_csv_content
+from metadata_lookup import (
+    lookup_title,
+    lookup_metadata_by_program_id,
+    enrich_csv,
+    enrich_csv_content,
+)
 
 # Create the MCP server
 mcp = FastMCP(
@@ -19,6 +24,19 @@ mcp = FastMCP(
     host=os.getenv("HOST", "0.0.0.0"),
     port=int(os.getenv("PORT", "8080")),
 )
+
+
+@mcp.tool()
+def lookup_metadata_by_program_id_tool(program_id: int) -> str:
+    """Look up metadata for a title given its program_id (from content_info).
+    Returns genre, release year, imdb_id, import_id (studio),
+    and whether the title is Fresh or Returning.
+    """
+    try:
+        result = lookup_metadata_by_program_id(program_id)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 @mcp.tool()
