@@ -1,7 +1,5 @@
 databricks-sdk
-flask
+mcp
 pandas
 requests
-mcp
-streamlit
 uvicorn
